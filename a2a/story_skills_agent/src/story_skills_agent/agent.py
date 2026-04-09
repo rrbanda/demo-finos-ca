@@ -39,7 +39,7 @@ def _get_runner():
 
 
 def get_agent_card(host: str, port: int) -> AgentCard:
-    capabilities = AgentCapabilities(streaming=False)
+    capabilities = AgentCapabilities(streaming=True)
     skill = AgentSkill(
         id="story_writer",
         name="Collaborative Story Writer",
