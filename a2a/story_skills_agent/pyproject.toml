@@ -1,0 +1,20 @@
+[project]
+name = "story-skills-agent"
+version = "0.1.0"
+description = "A multi-agent story writer with ADK Skills, exposed as a Kagenti A2A agent."
+license = { text = "Apache-2.0" }
+requires-python = ">=3.11"
+dependencies = [
+    "google-adk>=1.0.0",
+    "litellm",
+    "a2a-sdk[http-server]>=0.2.16",
+    "uvicorn>=0.30.0",
+    "pydantic-settings>=2.8.1",
+]
+
+[project.scripts]
+server = "story_skills_agent.agent:run"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

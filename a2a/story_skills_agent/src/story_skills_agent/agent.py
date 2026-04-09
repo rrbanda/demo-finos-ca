@@ -1,0 +1,176 @@
+import logging
+import os
+from textwrap import dedent
+
+import uvicorn
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+from starlette.routing import Route
+
+from a2a.server.agent_execution import AgentExecutor, RequestContext
+from a2a.server.apps import A2AStarletteApplication
+from a2a.server.events.event_queue import EventQueue
+from a2a.server.request_handlers import DefaultRequestHandler
+from a2a.server.tasks import InMemoryTaskStore, TaskUpdater
+from a2a.types import AgentCapabilities, AgentCard, AgentSkill, TaskState, TextPart
+from a2a.utils import new_agent_text_message, new_task
+from google.genai import types
+
+from story_skills_agent.adk_agent import APP_NAME, KEY_FINAL_STORY, get_runner
+from story_skills_agent.configuration import Configuration
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+_runner = None
+_sessions: dict[str, str] = {}
+
+
+def _get_runner():
+    global _runner
+    if _runner is None:
+        os.environ.setdefault("OPENAI_API_KEY", "not-needed")
+        _runner = get_runner()
+    return _runner
+
+
+def get_agent_card(host: str, port: int) -> AgentCard:
+    capabilities = AgentCapabilities(streaming=False)
+    skill = AgentSkill(
+        id="story_writer",
+        name="Collaborative Story Writer",
+        description=(
+            "**Collaborative Story Writer** -- A multi-agent pipeline that writes "
+            "creative stories using ADK Skills for genre, structure, and character guidance."
+        ),
+        tags=["story", "writing", "creative", "multi-agent", "adk", "skills"],
+        examples=[
+            "Write a short fantasy story about a dragon who learns to cook",
+            "Create a mystery story set in a space station",
+            "Write a thriller about a programmer who discovers a hidden message in code",
+        ],
+    )
+    return AgentCard(
+        name="Story Skills Agent (Google ADK)",
+        description=dedent("""\
+            A multi-agent story writing pipeline built with Google ADK,
+            demonstrating ADK Skills and multi-agent orchestration on Kagenti.
+
+            ## Architecture
+            - **PromptEnhancer** expands ideas using writing Skills (genre, structure, character)
+            - **ParallelAgent** runs Creative + Focused writers simultaneously
+            - **CritiqueAgent** selects the best chapter draft
+            - **LoopAgent** iterates for multiple chapters
+            - **EditorAgent** polishes the final story
+
+            ## Powered by
+            - Google Agent Development Kit (ADK)
+            - LlamaStack (gemini-2.5-flash via OpenAI-compatible API)
+            - ADK SkillToolset with 3 writing skills
+        """),
+        url=os.getenv("AGENT_ENDPOINT", f"http://{host}:{port}").rstrip("/") + "/",
+        version="0.1.0",
+        default_input_modes=["text"],
+        default_output_modes=["text"],
+        capabilities=capabilities,
+        skills=[skill],
+    )
+
+
+class StoryExecutor(AgentExecutor):
+    """Bridges A2A protocol to the ADK multi-agent story pipeline."""
+
+    async def execute(self, context: RequestContext, event_queue: EventQueue):
+        task = context.current_task
+        if not task:
+            task = new_task(context.message)
+            await event_queue.enqueue_event(task)
+        task_updater = TaskUpdater(event_queue, task.id, task.context_id)
+
+        user_input = context.get_user_input()
+        logger.info("Story agent received: %s (context=%s)", user_input, task.context_id)
+
+        await task_updater.update_status(
+            TaskState.working,
+            new_agent_text_message(
+                "Starting the story pipeline: enhancing prompt, writing chapters, editing...",
+                task_updater.context_id,
+                task_updater.task_id,
+            ),
+        )
+
+        try:
+            runner = _get_runner()
+            context_id = task.context_id
+
+            if context_id not in _sessions:
+                session = await runner.session_service.create_session(
+                    app_name=APP_NAME, user_id=context_id
+                )
+                _sessions[context_id] = session.id
+            session_id = _sessions[context_id]
+
+            content = types.Content(role="user", parts=[types.Part(text=user_input)])
+
+            final_text = None
+            async for event in runner.run_async(
+                user_id=context_id, session_id=session_id, new_message=content
+            ):
+                if hasattr(event, "content") and event.content and event.content.parts:
+                    for part in event.content.parts:
+                        if hasattr(part, "text") and part.text:
+                            final_text = part.text
+
+            if not final_text:
+                session = await runner.session_service.get_session(
+                    app_name=APP_NAME, user_id=context_id, session_id=session_id
+                )
+                final_text = session.state.get(KEY_FINAL_STORY, "")
+
+            if not final_text:
+                final_text = "The story pipeline completed but produced no output. Please try again with a different prompt."
+
+            parts = [TextPart(text=final_text)]
+            await task_updater.add_artifact(parts)
+            await task_updater.complete()
+
+        except Exception as e:
+            logger.exception("Story agent error: %s", e)
+            parts = [TextPart(text=f"Error running story pipeline: {e}")]
+            await task_updater.add_artifact(parts)
+            await task_updater.failed()
+
+    async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
+        raise Exception("cancel not supported")
+
+
+async def health(request: Request) -> JSONResponse:
+    return JSONResponse({"status": "ok"})
+
+
+async def agent_card_compat(request: Request) -> JSONResponse:
+    card = get_agent_card(host="0.0.0.0", port=8000)
+    return JSONResponse(card.model_dump(mode="json", exclude_none=True))
+
+
+def run():
+    agent_card = get_agent_card(host="0.0.0.0", port=8000)
+
+    request_handler = DefaultRequestHandler(
+        agent_executor=StoryExecutor(),
+        task_store=InMemoryTaskStore(),
+    )
+
+    server = A2AStarletteApplication(
+        agent_card=agent_card,
+        http_handler=request_handler,
+    )
+
+    app = server.build()
+
+    app.routes.insert(0, Route("/health", health, methods=["GET"]))
+    app.routes.insert(
+        0, Route("/.well-known/agent-card.json", agent_card_compat, methods=["GET"])
+    )
+
+    uvicorn.run(app, host="0.0.0.0", port=8000)
