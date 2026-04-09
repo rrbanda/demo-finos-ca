@@ -19,8 +19,12 @@ from google.genai import types
 from story_skills_agent.adk_agent import APP_NAME, KEY_FINAL_STORY, get_runner
 from story_skills_agent.configuration import Configuration
 
-logging.basicConfig(level=logging.INFO)
+_log_level = os.getenv("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(level=getattr(logging, _log_level, logging.INFO))
 logger = logging.getLogger(__name__)
+logging.getLogger("google.adk").setLevel(logging.DEBUG)
+logging.getLogger("google.adk.tools").setLevel(logging.DEBUG)
+logging.getLogger("google.adk.skills").setLevel(logging.DEBUG)
 
 _runner = None
 _sessions: dict[str, str] = {}
@@ -116,8 +120,22 @@ class StoryExecutor(AgentExecutor):
             async for event in runner.run_async(
                 user_id=context_id, session_id=session_id, new_message=content
             ):
+                if hasattr(event, "author") and event.author:
+                    logger.info("ADK event from agent: %s", event.author)
                 if hasattr(event, "content") and event.content and event.content.parts:
                     for part in event.content.parts:
+                        if hasattr(part, "function_call") and part.function_call:
+                            logger.info(
+                                "TOOL CALL: %s(%s)",
+                                part.function_call.name,
+                                part.function_call.args,
+                            )
+                        if hasattr(part, "function_response") and part.function_response:
+                            logger.info(
+                                "TOOL RESPONSE: %s -> %s",
+                                part.function_response.name,
+                                str(part.function_response.response)[:200],
+                            )
                         if hasattr(part, "text") and part.text:
                             final_text = part.text
 
