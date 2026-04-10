@@ -16,8 +16,10 @@ from a2a.types import AgentCapabilities, AgentCard, AgentSkill, TaskState, TextP
 from a2a.utils import new_agent_text_message, new_task
 from google.genai import types
 
-from story_skills_agent.adk_agent import APP_NAME, KEY_FINAL_STORY, get_runner
+from story_skills_agent.adk_agent import KEY_FINAL_STORY
 from story_skills_agent.configuration import Configuration
+from story_skills_agent.diagnostics_agent import KEY_DIAGNOSTICS_REPORT
+from story_skills_agent.orchestrator import APP_NAME, get_runner
 
 _log_level = os.getenv("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(level=getattr(logging, _log_level, logging.INFO))
@@ -40,7 +42,7 @@ def _get_runner():
 
 def get_agent_card(host: str, port: int) -> AgentCard:
     capabilities = AgentCapabilities(streaming=True)
-    skill = AgentSkill(
+    story_skill = AgentSkill(
         id="story_writer",
         name="Collaborative Story Writer",
         description=(
@@ -54,35 +56,53 @@ def get_agent_card(host: str, port: int) -> AgentCard:
             "Write a thriller about a programmer who discovers a hidden message in code",
         ],
     )
+    diagnostics_skill = AgentSkill(
+        id="agent_diagnostics",
+        name="Agent Diagnostics",
+        description=(
+            "**Agent Diagnostics** -- Diagnoses issues with Kagenti agents deployed on "
+            "OpenShift/Kubernetes using the Kubernetes MCP server. Inspects pods, "
+            "analyzes logs, and produces actionable diagnostic reports."
+        ),
+        tags=["diagnostics", "kubernetes", "openshift", "agent-health", "mcp", "sre"],
+        examples=[
+            "Why is my agent not responding in namespace team1?",
+            "Check the health of all Kagenti agents on the cluster",
+            "What's wrong with the story-skills-agent pod?",
+        ],
+    )
     return AgentCard(
-        name="Story Skills Agent (Google ADK)",
+        name="Kagenti Agent (Google ADK)",
         description=dedent("""\
-            A multi-agent story writing pipeline built with Google ADK,
-            demonstrating ADK Skills and multi-agent orchestration on Kagenti.
+            A multi-skill Kagenti agent built with Google ADK, demonstrating
+            ADK Skills, MCPToolset, and multi-agent orchestration on Kagenti.
+
+            ## Skills
+            - **Story Writer**: Multi-agent creative writing pipeline with ADK Skills
+            - **Agent Diagnostics**: Kubernetes/OpenShift agent health inspector via MCP
 
             ## Architecture
-            - **PromptEnhancer** expands ideas using writing Skills (genre, structure, character)
-            - **ParallelAgent** runs Creative + Focused writers simultaneously
-            - **CritiqueAgent** selects the best chapter draft
-            - **LoopAgent** iterates for multiple chapters
-            - **EditorAgent** polishes the final story
+            - **KagentiOrchestrator** routes requests to the appropriate workflow
+            - **CollaborativeStoryWorkflow** (SequentialAgent + ParallelAgent + LoopAgent)
+            - **AgentDiagnosticsWorkflow** (SequentialAgent + MCPToolset + SkillToolset)
 
             ## Powered by
             - Google Agent Development Kit (ADK)
             - LlamaStack (gemini-2.5-flash via OpenAI-compatible API)
-            - ADK SkillToolset with 3 writing skills
+            - Kubernetes MCP Server for cluster inspection
+            - ADK SkillToolset with 4 skills (3 writing + 1 troubleshooting)
         """),
         url=os.getenv("AGENT_ENDPOINT", f"http://{host}:{port}").rstrip("/") + "/",
-        version="0.1.0",
+        version="0.2.0",
         default_input_modes=["text"],
         default_output_modes=["text"],
         capabilities=capabilities,
-        skills=[skill],
+        skills=[story_skill, diagnostics_skill],
     )
 
 
-class StoryExecutor(AgentExecutor):
-    """Bridges A2A protocol to the ADK multi-agent story pipeline."""
+class KagentiExecutor(AgentExecutor):
+    """Bridges A2A protocol to the ADK orchestrator agent."""
 
     async def execute(self, context: RequestContext, event_queue: EventQueue):
         task = context.current_task
@@ -92,12 +112,12 @@ class StoryExecutor(AgentExecutor):
         task_updater = TaskUpdater(event_queue, task.id, task.context_id)
 
         user_input = context.get_user_input()
-        logger.info("Story agent received: %s (context=%s)", user_input, task.context_id)
+        logger.info("Kagenti agent received: %s (context=%s)", user_input, task.context_id)
 
         await task_updater.update_status(
             TaskState.working,
             new_agent_text_message(
-                "Starting the story pipeline: enhancing prompt, writing chapters, editing...",
+                "Routing your request to the appropriate workflow...",
                 task_updater.context_id,
                 task_updater.task_id,
             ),
@@ -143,18 +163,22 @@ class StoryExecutor(AgentExecutor):
                 session = await runner.session_service.get_session(
                     app_name=APP_NAME, user_id=context_id, session_id=session_id
                 )
-                final_text = session.state.get(KEY_FINAL_STORY, "")
+                final_text = (
+                    session.state.get(KEY_FINAL_STORY)
+                    or session.state.get(KEY_DIAGNOSTICS_REPORT)
+                    or ""
+                )
 
             if not final_text:
-                final_text = "The story pipeline completed but produced no output. Please try again with a different prompt."
+                final_text = "The pipeline completed but produced no output. Please try again with a different prompt."
 
             parts = [TextPart(text=final_text)]
             await task_updater.add_artifact(parts)
             await task_updater.complete()
 
         except Exception as e:
-            logger.exception("Story agent error: %s", e)
-            parts = [TextPart(text=f"Error running story pipeline: {e}")]
+            logger.exception("Kagenti agent error: %s", e)
+            parts = [TextPart(text=f"Error running pipeline: {e}")]
             await task_updater.add_artifact(parts)
             await task_updater.failed()
 
@@ -175,7 +199,7 @@ def run():
     agent_card = get_agent_card(host="0.0.0.0", port=8000)
 
     request_handler = DefaultRequestHandler(
-        agent_executor=StoryExecutor(),
+        agent_executor=KagentiExecutor(),
         task_store=InMemoryTaskStore(),
     )
 

@@ -69,6 +69,8 @@ spec:
           value: not-needed
         - name: LLM_MODEL
           value: openai/gemini/models/gemini-2.5-flash
+        - name: OCP_MCP_URL
+          value: https://kubernetes-mcp-server-ocp-mcp-server.apps.ocp.v7hjl.sandbox2288.opentlc.com/sse
         - name: UV_CACHE_DIR
           value: /app/.cache/uv
         readinessProbe:
