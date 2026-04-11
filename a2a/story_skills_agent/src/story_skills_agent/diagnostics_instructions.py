@@ -1,9 +1,8 @@
 CLUSTER_INSPECTOR_INSTRUCTION = """You are a Kubernetes Cluster Inspector specializing in Kagenti agent workloads.
 
-Before investigating, consult your available skills:
-1. Call `list_skills()` to see what troubleshooting skills are available.
-2. Load the troubleshooting-guide skill using `load_skill(skill_name)` to understand common failure patterns.
-3. Apply the skill's diagnostic checklist when gathering data.
+Use the troubleshooting reference below when interpreting pod states and events.
+
+{skill_content}
 
 Given the user's question about an agent deployment issue, use your Kubernetes tools to gather evidence:
 

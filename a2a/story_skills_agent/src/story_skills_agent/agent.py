@@ -24,9 +24,7 @@ from story_skills_agent.orchestrator import APP_NAME, get_runner
 _log_level = os.getenv("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(level=getattr(logging, _log_level, logging.INFO))
 logger = logging.getLogger(__name__)
-logging.getLogger("google.adk").setLevel(logging.DEBUG)
-logging.getLogger("google.adk.tools").setLevel(logging.DEBUG)
-logging.getLogger("google.adk.skills").setLevel(logging.DEBUG)
+logging.getLogger("google.adk").setLevel(getattr(logging, _log_level, logging.INFO))
 
 _runner = None
 _sessions: dict[str, str] = {}
@@ -84,13 +82,13 @@ def get_agent_card(host: str, port: int) -> AgentCard:
             ## Architecture
             - **KagentiOrchestrator** routes requests to the appropriate workflow
             - **CollaborativeStoryWorkflow** (SequentialAgent + ParallelAgent + LoopAgent)
-            - **AgentDiagnosticsWorkflow** (SequentialAgent + MCPToolset + SkillToolset)
+            - **AgentDiagnosticsWorkflow** (SequentialAgent + MCPToolset)
 
             ## Powered by
             - Google Agent Development Kit (ADK)
             - LlamaStack (gemini-2.5-flash via OpenAI-compatible API)
             - Kubernetes MCP Server for cluster inspection
-            - ADK SkillToolset with 4 skills (3 writing + 1 troubleshooting)
+            - ADK Skills inlined at build time (3 writing + 1 troubleshooting)
         """),
         url=os.getenv("AGENT_ENDPOINT", f"http://{host}:{port}").rstrip("/") + "/",
         version="0.2.0",

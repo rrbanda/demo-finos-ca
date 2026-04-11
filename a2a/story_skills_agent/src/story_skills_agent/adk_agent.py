@@ -3,15 +3,13 @@ import pathlib
 from google.adk.agents import LlmAgent, LoopAgent, ParallelAgent, SequentialAgent
 from google.adk.models.lite_llm import LiteLlm
 from google.adk.runners import InMemoryRunner
-from google.adk.skills import load_skill_from_dir
-from google.adk.tools.skill_toolset import SkillToolset
 from google.genai import types
 
 from story_skills_agent.configuration import Configuration
 from story_skills_agent import instructions
 
-N_CHAPTERS = 3
-MAX_WORDS = 100
+N_CHAPTERS = 2
+MAX_WORDS = 75
 
 KEY_USER_PROMPT = "user_prompt"
 KEY_ENHANCED_PROMPT = "enhanced_prompt"
@@ -31,19 +29,16 @@ def _build_model(config: Configuration) -> LiteLlm:
     )
 
 
-def _build_skill_toolset() -> SkillToolset:
+def _load_skill_content() -> str:
+    """Read skill SKILL.md files at build time and return their text."""
     skills_root = pathlib.Path(__file__).parent / "skills"
-    skill_names = [
-        "genre-guide",
-        "story-structure",
-        "character-builder",
-    ]
-    skill_list = []
+    skill_names = ["genre-guide", "story-structure", "character-builder"]
+    parts = []
     for name in skill_names:
-        skill_dir = skills_root / name
-        if skill_dir.exists():
-            skill_list.append(load_skill_from_dir(skill_dir))
-    return SkillToolset(skills=skill_list)
+        path = skills_root / name / "SKILL.md"
+        if path.exists():
+            parts.append(path.read_text())
+    return "\n\n".join(parts)
 
 
 def set_initial_story(callback_context, llm_request):
@@ -55,16 +50,17 @@ def build_agent(config: Configuration | None = None) -> SequentialAgent:
         config = Configuration()
 
     model = _build_model(config)
-    skill_toolset = _build_skill_toolset()
+    skill_content = _load_skill_content()
 
     prompt_enhancer = LlmAgent(
         name="PromptEnhancerAgent",
         model=model,
-        instruction=instructions.PROMPT_ENHANCER_INSTRUCTION,
+        instruction=instructions.PROMPT_ENHANCER_INSTRUCTION.format(
+            skill_content=skill_content
+        ),
         description="Expands user prompt into a full story premise using writing skills.",
         output_key=KEY_ENHANCED_PROMPT,
         before_model_callback=set_initial_story,
-        tools=[skill_toolset],
     )
 
     creative_writer = LlmAgent(

@@ -2,10 +2,8 @@ import pathlib
 
 from google.adk.agents import LlmAgent, SequentialAgent
 from google.adk.models.lite_llm import LiteLlm
-from google.adk.skills import load_skill_from_dir
 from google.adk.tools import MCPToolset
 from google.adk.tools.mcp_tool.mcp_session_manager import SseConnectionParams
-from google.adk.tools.skill_toolset import SkillToolset
 
 from story_skills_agent.configuration import Configuration
 from story_skills_agent import diagnostics_instructions as instructions
@@ -30,29 +28,26 @@ def _build_k8s_toolset(config: Configuration) -> MCPToolset:
     )
 
 
-def _build_diagnostics_skill_toolset() -> SkillToolset:
-    skills_root = pathlib.Path(__file__).parent / "skills"
-    skill_names = ["troubleshooting-guide"]
-    skill_list = []
-    for name in skill_names:
-        skill_dir = skills_root / name
-        if skill_dir.exists():
-            skill_list.append(load_skill_from_dir(skill_dir))
-    return SkillToolset(skills=skill_list)
+def _load_diagnostics_skill_content() -> str:
+    """Read troubleshooting skill at build time and return its text."""
+    path = pathlib.Path(__file__).parent / "skills" / "troubleshooting-guide" / "SKILL.md"
+    return path.read_text() if path.exists() else ""
 
 
 def build_diagnostics_agent(
     model: LiteLlm, config: Configuration
 ) -> SequentialAgent:
     k8s_toolset = _build_k8s_toolset(config)
-    skill_toolset = _build_diagnostics_skill_toolset()
+    skill_content = _load_diagnostics_skill_content()
 
     cluster_inspector = LlmAgent(
         name="ClusterInspectorAgent",
         model=model,
-        instruction=instructions.CLUSTER_INSPECTOR_INSTRUCTION,
+        instruction=instructions.CLUSTER_INSPECTOR_INSTRUCTION.format(
+            skill_content=skill_content
+        ),
         description="Inspects Kubernetes cluster state for agent pods, deployments, services, and events.",
-        tools=[k8s_toolset, skill_toolset],
+        tools=[k8s_toolset],
         output_key=KEY_CLUSTER_FINDINGS,
     )
 

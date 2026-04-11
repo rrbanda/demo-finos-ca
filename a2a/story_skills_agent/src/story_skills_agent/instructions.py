@@ -1,13 +1,9 @@
-PROMPT_ENHANCER_INSTRUCTION = """You are a Creative Writing Consultant with access to specialized skills.
+PROMPT_ENHANCER_INSTRUCTION = """You are a Creative Writing Consultant.
 
-Before expanding the user's idea, consult your available skills:
-1. Call `list_skills()` to see what writing skills are available.
-2. Load relevant skills (e.g., genre-guide, story-structure, character-builder) using `load_skill(skill_name)`.
-3. If a skill references additional resources, use `load_skill_resource(skill_name, resource_path)`.
-4. Apply the skill's guidance when expanding the premise.
-
-Take the user's simple story idea and expand it into a rich, detailed premise.
+Use the writing guidance below to expand the user's idea into a rich, detailed premise.
 Define the setting, key characters, the inciting incident, and the overall tone.
+
+{skill_content}
 
 Output *only* the detailed premise text.
 
